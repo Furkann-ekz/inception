@@ -1,0 +1,391 @@
+Makefile:
+NAME=inception
+
+all:
+        docker-compose -f srcs/docker-compose.yml --env-file srcs/.env up --build -d
+
+down:
+        docker-compose -f srcs/docker-compose.yml --env-file srcs/.env down
+
+fclean: down
+        docker system prune -af
+        docker volume rm $$(docker volume ls -q)
+
+re: fclean all
+
+
+
+
+
+.env:
+DOMAIN_NAME=fekiz.42.fr
+
+DB_NAME=wordpress
+DB_HOST=mariadb
+DB_USER=fekiz
+DB_PASSWORD=/run/secrets/db_password
+DB_ROOT_PASSWORD=/run/secrets/db_password
+
+WP_ADMIN_USER=fekizz
+WP_ADMIN_EMAIL=osmanxfurkan62@gmail.com
+WP_ADMIN_PASSWORD=fekiz
+
+WP_TITLE=Inception Site
+
+
+
+
+
+docker-compose.yml:
+version: '3.3'
+
+services:
+  nginx:
+    build: ./requirements/nginx
+    container_name: nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - wordpress_files:/var/www/html
+    environment:
+      - DOMAIN_NAME=fekiz.42.fr
+    depends_on:
+      - wordpress
+    networks:
+      - inception
+    restart: always
+
+  wordpress:
+    build: ./requirements/wordpress
+    container_name: wordpress
+    expose:
+      - "9000"
+    volumes:
+      - wordpress_files:/var/www/html
+    environment:
+      - WORDPRESS_DB_HOST=mariadb
+      - WORDPRESS_DB_NAME=wordpress
+      - WORDPRESS_DB_USER=fekiz
+      - WORDPRESS_DB_PASSWORD=${DB_PASSWORD}
+    depends_on:
+      - mariadb
+    networks:
+      - inception
+    restart: always
+
+  mariadb:
+    build: ./requirements/mariadb
+    container_name: mariadb
+    expose:
+      - "3306"
+    volumes:
+      - db_data:/var/lib/mysql
+    environment:
+      - MYSQL_DATABASE=wordpress
+      - MYSQL_USER=fekiz
+      - MYSQL_PASSWORD=${DB_PASSWORD}
+      - MYSQL_ROOT_PASSWORD=${DB_ROOT_PASSWORD}
+    networks:
+      - inception
+    restart: always
+
+volumes:
+  db_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /home/fekiz/data/mariadb
+  wordpress_files:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /home/fekiz/data/wordpress
+
+
+networks:
+  inception:
+    driver: bridge
+
+
+
+
+
+mariadb/Dockerfile:
+FROM debian:bullseye
+
+RUN apt-get update && apt-get install -y mariadb-server
+
+COPY ./conf/50-server.cnf /etc/mysql/mariadb.conf.d/
+COPY ./tools/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+EXPOSE 3306
+
+ENTRYPOINT ["/entrypoint.sh"]
+
+
+
+
+
+
+
+mariadb/conf/50-server.cnf:
+[mysqld]
+user = mysql
+port = 3306
+bind-address = 0.0.0.0
+datadir = /var/lib/mysql
+socket = /run/mysqld/mysqld.sock
+pid-file = /run/mysqld/mysqld.pid
+symbolic-links = 0
+skip-external-locking
+skip-name-resolve
+
+# charset
+character-set-server = utf8mb4
+collation-server = utf8mb4_general_ci
+
+# logging
+log-error = /var/log/mysql/error.log
+expire_logs_days = 10
+
+# innodb
+innodb_file_per_table = 1
+
+
+
+
+
+
+
+mariadb/tools/entrypoint.sh:
+#!/bin/sh
+set -ex
+
+# Geliştirme için temiz başlat
+
+DB_NAME="${MYSQL_DATABASE}"
+DB_USER="${MYSQL_USER}"
+DB_PASSWORD="${MYSQL_PASSWORD}"
+DB_ROOT_PASSWORD="${MYSQL_ROOT_PASSWORD}"
+
+# İlk kurulum
+if [ ! -d /var/lib/mysql/mysql ] || [ -z "$(ls -A /var/lib/mysql/mysql)" ]; then
+  echo "✅ İlk MariaDB kurulumu yapılıyor..."
+  mysql_install_db --user=mysql --basedir=/usr --datadir=/var/lib/mysql
+
+  mysqld_safe --datadir=/var/lib/mysql &
+  
+  # MariaDB hazır olana kadar bekle
+  until mysqladmin ping --silent; do
+    echo "⏳ MariaDB başlatılıyor..."
+    sleep 1
+  done
+
+  echo "✅ Veritabanı ve kullanıcılar oluşturuluyor..."
+  mysql -u root <<EOSQL
+CREATE DATABASE IF NOT EXISTS ${DB_NAME};
+DROP USER IF EXISTS '${DB_USER}'@'%';
+CREATE USER '${DB_USER}'@'%' IDENTIFIED BY '${DB_PASSWORD}';
+GRANT ALL PRIVILEGES ON ${DB_NAME}.* TO '${DB_USER}'@'%';
+GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' IDENTIFIED BY '${DB_ROOT_PASSWORD}';
+FLUSH PRIVILEGES;
+EOSQL
+
+  mysqladmin shutdown
+
+  # Kapanmayı bekle
+  sleep 3
+fi
+
+echo "🚀 MariaDB normal başlatılıyor..."
+exec mysqld_safe --datadir=/var/lib/mysql
+
+
+
+
+
+
+
+
+wordpress/Dockerfile:
+FROM debian:bullseye
+
+RUN apt-get update && apt-get install -y \
+    php-fpm php-mysql php-cli php-curl php-gd php-mbstring php-xml php-xmlrpc \
+    mariadb-client curl wget unzip less netcat
+
+RUN mkdir -p /run/php
+
+# wp-cli
+RUN curl -O https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar && \
+    chmod +x wp-cli.phar && mv wp-cli.phar /usr/local/bin/wp
+
+COPY ./conf/www.conf /etc/php/7.4/fpm/pool.d/www.conf
+COPY ./tools/WordPressInstaller.sh /usr/local/bin/setup.sh
+RUN chmod +x /usr/local/bin/setup.sh
+
+EXPOSE 9000
+ENTRYPOINT ["setup.sh"]
+
+
+
+
+
+
+
+
+wordpress/conf/www.conf:
+[www]
+user = www-data
+group = www-data
+listen = 9000
+pm = dynamic
+pm.max_children = 5
+pm.start_servers = 2
+pm.min_spare_servers = 1
+pm.max_spare_servers = 3
+
+
+
+
+
+
+
+wordpress/tools/WordPressInstaller.sh:
+#!/bin/sh
+set -ex
+
+# MariaDB hazır olana kadar bekle
+echo "⏳ MariaDB hazır olana kadar bekleniyor..."
+until nc -z mariadb 3306; do
+  echo "⏳ MariaDB hala hazır değil..."
+  sleep 2
+done
+
+echo "✅ MariaDB erişilebilir durumda."
+
+cd /var/www/html
+
+if [ ! -f wp-config.php ]; then
+  echo "📥 WordPress indiriliyor..."
+  wp core download --allow-root
+
+  echo "🛠 wp-config.php oluşturuluyor..."
+  wp config create \
+    --dbname=wordpress \
+    --dbuser="${WORDPRESS_DB_USER}" \
+    --dbpass="${WORDPRESS_DB_PASSWORD}" \
+    --dbhost=mariadb \
+    --allow-root
+
+  echo "🚀 WordPress kurulumu yapılıyor..."
+  wp core install \
+    --url=https://fekiz.42.fr \
+    --title="${WP_TITLE}" \
+    --admin_user="${WP_ADMIN_USER}" \
+    --admin_password="${WP_ADMIN_PASSWORD}" \
+    --admin_email="${WP_ADMIN_EMAIL}" \
+    --skip-email \
+    --allow-root
+fi
+
+# 💡 Bu komut if bloğu DIŞINDA olmalı
+echo "👤 İkinci kullanıcı oluşturuluyor..."
+wp user get furkan --allow-root 2>/dev/null || \
+wp user create furkan furkan@example.com --role=subscriber --user_pass=123456 --allow-root
+
+echo "✅ php-fpm başlatılıyor..."
+php-fpm7.4 -F
+
+
+
+
+
+
+
+
+nginx/Dockerfile:
+FROM debian:bullseye
+
+RUN apt-get update && apt-get install -y nginx openssl
+
+COPY ./tools/installer.sh /installer.sh
+COPY ./conf/default.conf /etc/nginx/sites-available/default
+RUN chmod +x /installer.sh
+
+EXPOSE 443
+
+
+
+
+
+
+nginx/conf/default.conf:
+# HTTP'den HTTPS'ye yönlendirme
+server {
+    listen 80;
+    server_name fekiz.42.fr;
+
+    return 301 https://$host$request_uri;
+}
+
+# Asıl HTTPS yapılandırması
+server {
+    listen 443 ssl;
+    server_name fekiz.42.fr;
+
+    ssl_certificate     /etc/ssl/certs/fekiz.42.fr.crt;
+    ssl_certificate_key /etc/ssl/private/fekiz.42.fr.key;
+
+    ssl_protocols TLSv1.2 TLSv1.3;
+
+    root /var/www/html;
+    index index.php index.html;
+
+    location / {
+        try_files $uri $uri/ /index.php$is_args$args;
+    }
+
+    location ~ \.php$ {
+        include fastcgi_params;
+        fastcgi_pass wordpress:9000;
+        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+    }
+}
+
+
+
+
+
+
+
+
+nginx/tools/installer.sh:
+#!/bin/bash
+set -e
+
+CERT_DIR="/etc/ssl/certs"
+KEY_DIR="/etc/ssl/private"
+DOMAIN="${DOMAIN_NAME}"
+
+mkdir -p ${CERT_DIR} ${KEY_DIR}
+
+openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+  -keyout ${KEY_DIR}/${DOMAIN}.key \
+  -out ${CERT_DIR}/${DOMAIN}.crt \
+  -subj "/C=TR/ST=Istanbul/L=42School/O=Inception/CN=${DOMAIN}"
+
+echo "Starting nginx with TLS for ${DOMAIN}"
+exec nginx -g "daemon off;"
+
+
+
+
+
+
+
+secret klasöründeki şifre dosyalarını göndermiyorum. Onlar olması gereken yerde ve olması gereken şekilde yani onlarda bir sıkıntı yok bu yüzden göndermiyorum. Hepsinin içeriğinde fekiz yazıyor.
