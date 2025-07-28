@@ -1,4 +1,4 @@
-makefile:
+Makefile:
 NAME=inception
 
 all:
@@ -304,7 +304,7 @@ ENTRYPOINT ["setup.sh"]
 
 
 
-wordpress/tools/wordpressinstaller.sh:
+wordpress/tools/WordPressInstaller.sh:
 set -ex
 
 # MariaDB haz      r olana kadar bekle
