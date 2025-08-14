@@ -9,13 +9,10 @@ symbolic-links = 0
 skip-external-locking
 skip-name-resolve
 
-# charset
 character-set-server = utf8mb4
 collation-server = utf8mb4_general_ci
 
-# logging
 log-error = /var/log/mysql/error.log
 expire_logs_days = 10
 
-# innodb
 innodb_file_per_table = 1
