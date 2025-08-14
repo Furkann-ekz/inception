@@ -1,23 +1,19 @@
 #!/bin/sh
 set -ex
 
-# MariaDB hazır olana kadar bekle
-echo "⌛ MariaDB bekleniyor..."
+echo "Waiting for mariadb"
 until nc -z mariadb 3306; do
-  echo "⏳ MariaDB hala hazır değil..."
+  echo "Mariadb is not ready."
   sleep 2
 done
 
-echo "✅ MariaDB erişilebilir durumda."
-
 cd /var/www/html
 
-# Eğer daha önce kurulmadıysa
 if [ ! -f wp-config.php ]; then
-  echo "⬇️ WordPress indiriliyor..."
+  echo "Downloading wordpress"
   wp core download --allow-root
 
-  echo "⚙️ wp-config.php oluşturuluyor..."
+  echo "wp-config.php creating"
   wp config create \
     --dbname="$WP_DB_NAME" \
     --dbuser="$WP_DB_USER" \
@@ -25,7 +21,7 @@ if [ ! -f wp-config.php ]; then
     --dbhost=mariadb \
     --allow-root
 
-  echo "🚀 WordPress kurulumu yapılıyor..."
+  echo "start to wordpress setup"
   wp core install \
     --url="$WP_SITE_URL" \
     --title="$WP_SITE_TITLE" \
@@ -35,12 +31,11 @@ if [ ! -f wp-config.php ]; then
     --skip-email \
     --allow-root
 
-  echo "👤 Ek kullanıcı oluşturuluyor..."
   wp user create "$WP_EXTRA_USER" "$WP_EXTRA_EMAIL" \
     --user_pass="$WP_EXTRA_PASS" \
     --role=author \
     --allow-root
 fi
 
-echo "🧠 php-fpm başlatılıyor..."
+echo "start to php-fpm"
 php-fpm7.4 -F
